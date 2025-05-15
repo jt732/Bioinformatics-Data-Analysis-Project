@@ -1,0 +1,320 @@
+---
+title: "Multi"
+format: pdf
+editor: visual
+---
+
+# Slide 0010
+
+## load packages and functions
+
+### Multi-process library for faster speed (edit out if it breaks)
+
+```{r}
+library(future)
+plan(strategy = multisession, workers = 2)
+```
+
+```{r, warning = false}
+library(Seurat)
+library(future)
+library(ggplot2)
+library(dplyr)
+library(here)
+
+`%!in%` = Negate(`%in%`)
+
+# circle function just in case you need a circle to separate the samples
+circleFun <- function(center = c(0,0),diameter = 1, npoints = 100){
+    r = diameter / 2
+    tt <- seq(0,2*pi,length.out = npoints)
+    xx <- center[1] + r * cos(tt)
+    yy <- center[2] + r * sin(tt)
+    return(data.frame(x = xx, y = yy))
+}
+
+modified_circleFun <- function(x = 0, y = 0, center = c(0, 0), radius = 1) {
+  return(data.frame(
+    is_inside = ((x - center[1])**2 + (y - center[2])**2 < radius**2)
+    ))
+}
+```
+
+## construct the xenium object
+
+```{r}
+path = here::here("spatial/raw_data/20240307__223318__03072024_AndeB_Multi/output-XETG00221__0010340__Region_1__20240307__223326")
+```
+
+```{r}
+# Load the Xenium data,
+xenium_multi_0010 = LoadXenium(path, fov = "fov")
+# Remove cells with 0 counts
+xenium_multi_0010 = subset(xenium_multi_0010, subset = nCount_Xenium > 0)
+# if you want to save this data:
+save(xenium_multi_0010, file = "xenium_multi_0010_raw.RData")
+```
+
+```{r}
+load(file = here::here("spatial/saved_data/xenium_multi_0010_raw.RData"))
+```
+
+## violin plots
+
+```{r}
+VlnPlot(xenium_multi_0010, features = c("nFeature_Xenium", "nCount_Xenium"), ncol = 2, pt.size = 0)
+```
+
+```{r}
+xenium_multi_0010@images[["fov"]]@boundaries[["centroids"]]@coords[1:10, ]
+```
+
+```{r}
+# get coordinates
+all_cell_coordinates_m = xenium_multi_0010@images[["fov"]]@boundaries[["centroids"]]@coords%>%as.data.frame()
+# add in cell names 
+all_cell_coordinates_m$cell_name = xenium_multi_0010@images[["fov"]]@boundaries[["centroids"]]@cells
+# plot the cells
+ggplot(data = all_cell_coordinates_m)+
+  geom_point(aes(x = x, y = y), size = 0.01)+coord_fixed()
+```
+
+```{r}
+nrow(data.frame(xenium_multi_0010@assays$Xenium$counts))
+```
+
+## label the samples without specific name
+
+```{r}
+all_cell_coordinates_m$sample = NA
+
+# seperate out our sample A
+
+all_cell_coordinates_m = all_cell_coordinates_m %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                              x>6000 &
+                              y>16000 ~ "sample_A",
+                            .default = as.character(sample)))
+
+# seperate out our sample B
+
+all_cell_coordinates_m = all_cell_coordinates_m %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                              x > 4950 &
+                              y > 11650 ~ "sample_B",
+                            .default = as.character(sample)
+                            ))
+
+# seperate out our sample C
+
+all_cell_coordinates_m = all_cell_coordinates_m %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &(
+                              (x > 6000 & y > 6500) |
+                              (x > 5015 & y > 9670) |
+                              (x > 5265 & x < 6020 & y > 9220))~ "sample_C",
+                              .default = as.character(sample)))
+
+# sample D
+
+all_cell_coordinates_m = all_cell_coordinates_m %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE & x > 6000 ~ "sample_D",
+                            .default = as.character(sample)))
+
+# sample E
+
+all_cell_coordinates_m = all_cell_coordinates_m %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                              x > 3000 &
+                              y > 17000 ~ "sample_E",
+                            .default = as.character(sample)
+                            ))
+
+
+# sample F
+
+all_cell_coordinates_m = all_cell_coordinates_m %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE & (
+                            (x > 680 & y > 16780) | y > 17500)~ "sample_F",
+                            .default = as.character(sample)
+                            ))
+
+# sample G
+
+all_cell_coordinates_m = all_cell_coordinates_m %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE & 
+                             x > 2960 & y < 5140 ~ "sample_G",
+                            .default = as.character(sample)
+                            ))
+
+# sample H
+
+all_cell_coordinates_m = all_cell_coordinates_m %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE & (
+                              (x < 1180 & y > 10000) |
+                              (x < 2528 & y > 9920 & y < 10400) |
+                              (x < 2363 & y > 10380 & y < 10820) |
+                              (x < 2185 & y > 10750 & y < 11285) |
+                              (x < 1900 & y > 11260 & y < 11815) |
+                              (x < 1840 & y > 11800 & y < 12470) |
+                              (x < 1770 & y > 12465 & y < 12620) |
+                              (x < 1674 & y > 12620 & y < 12830) |
+                              (x < 1618 & y > 12465 & y < 13190) |
+                              (x < 1570 & y > 13166 & y < 13310) |
+                              (x < 1520 & y > 11270 & y < 14200) )~ "sample_H",
+                            .default = as.character(sample)
+                            ))
+
+# sample I 
+all_cell_coordinates_m = all_cell_coordinates_m %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE & 
+                              x < 4500 & y > 10000 ~ "sample_I",
+                            .default = as.character(sample) ))
+
+# sample J
+all_cell_coordinates_m = all_cell_coordinates_m %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE & (
+                            (y > 7500) |
+                            (x < 2365 & y > 7030) |
+                            (x < 1580 & y > 6240) |
+                            (x < 250 & y > 5850)) ~ "sample_J",
+                            .default = as.character(sample) ))
+
+# sample K 
+all_cell_coordinates_m = all_cell_coordinates_m %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE & (
+                                              (y < 4270) |
+                                              (x > 1065 & y < 4862) |
+                                            #  (x > 1735 & y < 4900) |
+                                              (x > 1925 & y < 5114) |
+                                              (x > 2010 & x < 2030 & y < 5120) |
+                                              (x > 2438 & y < 5180)) ~ "sample_K",
+                            .default = as.character(sample) ))
+
+# sample L
+all_cell_coordinates_m = all_cell_coordinates_m %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE & (
+                                              (y > 4000) ) ~ "sample_L",
+                            .default = as.character(sample) ))
+
+
+```
+
+## plot the labels
+
+```{r}
+# plotting
+ggplot(data = all_cell_coordinates_m)+
+  geom_point(aes(x = x, y = y, color = sample), size = 0.01) +
+    theme(
+    legend.position = "right",
+    legend.text = element_text(size = 11),
+    legend.title = element_text(size = 12)
+  )  +
+  guides(color = guide_legend(override.aes = list(size = 5)))
+```
+
+## save the plot
+
+```{r}
+xenium_multi_0010$sample <- all_cell_coordinates_m$sample
+Idents(xenium_multi_0010) = "sample"
+plot <- ImageDimPlot(xenium_multi_0010, border.color = "NA")
+new_plot <- plot +
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.background = element_rect(color = "black", fill = "black")) +
+  ggtitle("0010 Multi Slide 2")
+
+new_plot |> 
+    ggsave(
+    filename = here("spatial/images/plot_multitissue_0010.jpeg"),
+    width = 15,
+    height = 20,
+    dpi = 500
+  )
+```
+
+```{r}
+options(future.globals.maxSize= 1000000000)
+xenium_multi_0010 = SCTransform(xenium_multi_0010, assay = "Xenium")
+xenium_multi_0010 = RunPCA(xenium_multi_0010, npcs = 30, features = rownames(xenium_multi_0010))
+# how many dims should we use? You can play with this number
+xenium_multi_0010 = RunUMAP(xenium_multi_0010, dims = 1:30)
+xenium_multi_0010 = FindNeighbors(xenium_multi_0010, reduction = "pca", dims = 1:30)
+
+
+# increase resolution to get more clusters; can go beyond 1
+xenium_multi_0010 = FindClusters(xenium_multi_0010, resolution = c(0.1))
+
+# clustering results are stored in the meta data
+DimPlot(xenium_multi_0010, group.by = "SCT_snn_res.0.1")
+Idents(xenium_multi_0010) = "SCT_snn_res.0.1"
+ImageDimPlot(xenium_multi_0010)
+
+##
+
+plot <- ImageDimPlot(xenium_multi_0010, border.color = "NA")
+new_plot <- plot +
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.background = element_rect(color = "black", fill = "black")) +
+  ggtitle("0010 Multitissue Clusters")
+
+new_plot |> 
+  ggsave(
+    filename = here("spatial/images/clusters-multitissue_0010.jpeg"),
+    width = 15,
+    height = 20,
+    dpi = 500
+  )
+```
+
+```{r}
+# go back to the Xenium assay (always pay attention to the assay you are working on!)
+DefaultAssay(xenium_multi_0010) = "Xenium"
+xenium_multi_0010 = NormalizeData(xenium_multi_0010)
+# change below to the clustering result you want to use
+Idents(xenium_multi_0010) = "SCT_snn_res.0.1"
+# read about the parameters in FindAllMarkers; 
+marker = FindAllMarkers(xenium_multi_0010, only.pos = TRUE, min.pct = 0.25, thresh.use = 0.3)
+# if you want to save the markers into a csv
+write.csv(marker, file = here("spatial/saved_data/xenium_0010_multi_res02_markergene.csv"))
+```
+
+```{r}
+save(xenium_multi_0010, file = here("spatial/saved_data/xenium_multi_0010_processed.RData"))
+```
+
+```{r}
+load(file = here("spatial/saved_data/xenium_multi_0010_processed.RData"))
+```
+
+```{r}
+DefaultAssay(xenium_multi_0010) = "Xenium"
+# violin plots for example
+# VlnPlot(xenium_multi_0010, features = c("Myoz1"))
+# feature plots
+# FeaturePlot(xenium_multi_0010, features = c("Myoz1"))
+# heatmap for marker genes for example
+markers_top10 = marker %>% 
+  group_by(cluster) %>% 
+  top_n(10, avg_log2FC)
+xenium_multi_0010 = ScaleData(xenium_multi_0010, verbose = FALSE, features = markers_top10$gene)
+
+# DoHeatmap(ins_FBDP, features=markers_top10$gene)
+
+##
+heatmap <- DoHeatmap(xenium_multi_0010, features=markers_top10$gene)
+
+new_heatmap <- heatmap + theme(element_text(size = 3))
+
+new_heatmap |> 
+  ggsave(
+    filename = here::here("spatial/images/heatmap_multitissue_0010.jpeg"),
+    width = 15,
+    height = 20,
+    dpi = 500
+  )
+```

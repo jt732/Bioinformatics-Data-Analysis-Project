@@ -1,0 +1,316 @@
+---
+title: "Multitissue_0029"
+format: pdf
+editor: visual
+---
+
+# Slide 0029
+
+## load packages and functions
+
+### Multi-process library for faster speed (edit out if it breaks)
+
+```{r}
+library(future)
+# library(reticulate)
+plan(strategy = multisession, workers = 2)
+```
+
+```{r, warning = false}
+library(Seurat)
+library(future)
+library(ggplot2)
+library(dplyr)
+library(here)
+
+`%!in%` = Negate(`%in%`)
+
+# circle function just in case you need a circle to separate the samples
+circleFun <- function(center = c(0,0),diameter = 1, npoints = 100){
+    r = diameter / 2
+    tt <- seq(0,2*pi,length.out = npoints)
+    xx <- center[1] + r * cos(tt)
+    yy <- center[2] + r * sin(tt)
+    return(data.frame(x = xx, y = yy))
+}
+
+modified_circleFun <- function(x = 0, y = 0, center = c(0, 0), radius = 1) {
+  return(data.frame(
+    is_inside = ((x - center[1])**2 + (y - center[2])**2 < radius**2)
+    ))
+}
+```
+
+## construct the xenium object
+
+```{r}
+path = here::here("spatial/raw_data/20240307__223318__03072024_AndeB_Multi/output-XETG00221__0029261__Region_1__20240307__223326")
+```
+
+```{r}
+# Load the Xenium data,
+if (!file.exists(here::here("spatial/saved_data/xenium_multi_0029_raw.RData"))) {
+  xenium_multi_0029 = LoadXenium(path, fov = "fov")
+  # Remove cells with 0 counts
+  xenium_multi_0029 = subset(xenium_multi_0029, subset = nCount_Xenium > 0)
+  # if you want to save this data:
+  save(xenium_multi_0029, file = "xenium_multi_0029_raw.RData")
+} 
+```
+
+OTHERWISE USE THIS
+
+```{r}
+# Run this if the object is already saved as a .RData
+load(file = here::here("spatial/saved_data/xenium_multi_0029_raw.RData"))
+```
+
+```{r}
+# Each assay has an image object with a fov attribute, which contains a boundary object with a
+# centroid attribute, which contains a coordinate object containing the coords of all cells
+
+xenium_multi_0029@images[["fov"]]@boundaries[["centroids"]]@coords[1:10, ]
+# first 10 cells coords
+
+p1 <- ImageFeaturePlot(xenium_multi_0029, features = "Rgs5")
+new_plot <- p1 +
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.background = element_rect(color = "black", fill = "black"))
+new_plot |> 
+ggsave(
+    filename = "Rgs5-0029.jpeg",
+    width = 15,
+    height = 20,
+    dpi = 500
+  )
+```
+
+# take a look at the spatial location (coordinates) of the cells
+
+```{r}
+# get coordinates
+all_cell_coordinates = xenium_multi_0029@images[["fov"]]@boundaries[["centroids"]]@coords%>%as.data.frame()
+# add in cell names 
+all_cell_coordinates$cell_name = xenium_multi_0029@images[["fov"]]@boundaries[["centroids"]]@cells
+# plot the cells
+ggplot(data = all_cell_coordinates)+
+  geom_point(aes(x = x, y = y), size = 0.01) +
+  coord_fixed()
+```
+
+# Labeling
+
+```{r}
+all_cell_coordinates$sample = NA
+sample_a = "a"
+sample_b = "b"
+sample_c = "c"
+sample_d = "d"
+sample_e = "e"
+sample_f = "f"
+sample_g = "g"
+sample_h = "h"
+
+
+# separate out sample a
+all_cell_coordinates = all_cell_coordinates %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                            (x > 0 & x < 6500 & y < 3000) ~ sample_a,
+                            .default = as.character(sample)))
+
+# separate out sample b
+all_cell_coordinates = all_cell_coordinates %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                            (x > 6000 & y < 5500) ~ sample_b,
+                            .default = as.character(sample)))
+
+# separate out sample c
+all_cell_coordinates = all_cell_coordinates %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                            (x > 3900 & y < 9000) ~ sample_c,
+                            .default = as.character(sample)))
+
+# separate out sample d
+all_cell_coordinates = all_cell_coordinates %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                            (x < 3900 & y < 10500) ~ sample_d,
+                            .default = as.character(sample)))
+
+# separate out sample e
+all_cell_coordinates = all_cell_coordinates %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                            (x < 5000 & y < 17000 & y > 11000) ~ sample_e,
+                            .default = as.character(sample)))
+
+# separate out sample f
+all_cell_coordinates = all_cell_coordinates %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                            (x < 6100) ~ sample_f,
+                            .default = as.character(sample)))
+
+# separate out sample g
+all_cell_coordinates = all_cell_coordinates %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                            (y < 16000) ~ sample_g,
+                            .default = as.character(sample)))
+
+# separate out sample h
+all_cell_coordinates = all_cell_coordinates %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                            (y > 16000) ~ sample_h,
+                            .default = as.character(sample)))
+
+
+
+# plot the labeled centroids
+all_cell_coordinates |> 
+ggplot() +
+  geom_point(aes(x = x, y = y, color = sample), size = 0.01)
+  
+```
+
+```{r}
+xenium_multi_0029$sample <- all_cell_coordinates$sample
+Idents(xenium_multi_0029) = "sample"
+plot <- ImageDimPlot(xenium_multi_0029, border.color = "NA")
+new_plot <- plot +
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.background = element_rect(color = "black", fill = "black")) +
+  ggtitle("0029 Multi Slide 1")
+
+new_plot |> 
+    ggsave(
+    filename = "plot.jpeg",
+    width = 15,
+    height = 20,
+    dpi = 500
+  )
+```
+
+```{r}
+xenium_multi_0029 = SCTransform(xenium_multi_0029, assay = "Xenium")
+xenium_multi_0029 = RunPCA(xenium_multi_0029, npcs = 30, features = rownames(xenium_multi_0029))
+# how many dims should we use? You can play with this number
+xenium_multi_0029 = RunUMAP(xenium_multi_0029, dims = 1:30)
+xenium_multi_0029 = FindNeighbors(xenium_multi_0029, reduction = "pca", dims = 1:30)
+
+
+# increase resolution to get more clusters; can go beyond 1
+xenium_multi_0029 = FindClusters(xenium_multi_0029, resolution = c(0.2))
+
+# clustering results are stored in the meta data
+DimPlot(xenium_multi_0029, group.by = "SCT_snn_res.0.2")
+Idents(xenium_multi_0029) = "SCT_snn_res.0.2"
+ImageDimPlot(xenium_multi_0029)
+
+##
+
+plot <- ImageDimPlot(xenium_multi_0029, border.color = "NA")
+new_plot <- plot +
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.background = element_rect(color = "black", fill = "black")) +
+  ggtitle("0029 Multitissue Slide 1")
+
+new_plot |> 
+ggsave(
+    filename = here("spatial/images/cluster-multi-0029.jpeg"),
+    width = 15,
+    height = 20,
+    dpi = 500
+  )
+```
+
+```{r}
+# go back to the Xenium assay (always pay attention to the assay you are working on!)
+DefaultAssay(xenium_multi_0029) = "Xenium"
+xenium_multi_0029 = NormalizeData(xenium_multi_0029)
+# change below to the clustering result you want to use
+Idents(xenium_multi_0029) = "SCT_snn_res.0.2"
+# read about the parameters in FindAllMarkers; 
+marker = FindAllMarkers(xenium_multi_0029, only.pos = TRUE, min.pct = 0.5, thresh.use = 0.3)
+# if you want to save the markers into a csv
+write.csv(marker, file = here("spatial/saved_data/xenium_0029_multi_res02_markergene.csv"))
+```
+
+```{r}
+DefaultAssay(xenium_multi_0029) = "Xenium"
+# violin plots for example
+# VlnPlot(xenium_multi_0029, features = c("Myoz1"))
+# feature plots
+FeaturePlot(xenium_multi_0029, features = c("Myoz1"))
+# heatmap for marker genes for example
+markers_top10 = marker %>% 
+  group_by(cluster) %>% 
+  top_n(5, avg_log2FC)
+xenium_multi_0029 = ScaleData(xenium_multi_0029, verbose = FALSE, features = markers_top10$gene)
+
+# DoHeatmap(ins_FBDP, features=markers_top10$gene)
+
+##
+heatmap <- DoHeatmap(xenium_multi_0029, features=markers_top10$gene)
+
+new_heatmap <- heatmap + theme(element_text(size = 3))
+
+new_heatmap |> 
+  ggsave(
+    filename = here("spatial/images/heatmap-multi-0029.jpeg"),
+    width = 15,
+    height = 20,
+    dpi = 700
+  )
+```
+
+```{r}
+markers <- FindMarkers(object = xenium_multi_0029, ident.1 = "Cluster")
+markers
+```
+
+```{r}
+save(xenium_multi_0029, file = "xenium_multi_0029_processed.RData")
+```
+
+```{r}
+load(file = here("spatial/saved_data/xenium_multi_0029_processed.RData"))
+```
+
+```{r}
+xenium_multi_0029$pseudo_cell_type = xenium_multi_0029$SCT_snn_res.0.2
+Idents(xenium_multi_0029) = "pseudo_cell_type"
+xenium_multi_0029 = RenameIdents(object = xenium_multi_0029,  
+                         "0" = "immune",
+                         "1" = "hair",
+                         "2" = "fibroblast",
+                         "3" = "epidermal",
+                         "4" = "???",
+                         "5" = "immune", 
+                         "6" = "fibroblast",
+                         "7" = "epidermal",
+                         "8" = "immune",
+                         "9" = "???",
+                         "10" = "schwann",
+                         "11" = "epidermal",
+                         "12" = "epidermal",
+                         "13" = "immune")
+xenium_multi_0029$pseudo_cell_type = xenium_multi_0029@active.ident
+xenium_multi_0029$pseudo_cell_type = factor(x = xenium_multi_0029$pseudo_cell_type, levels = c("immune", "hair", "fibroblast", "epidermal", "???", "schwann"))
+
+# plot
+Idents(xenium_multi_0029) = "pseudo_cell_type"
+p1 <- ImageDimPlot(xenium_multi_0029)
+
+new_p1 <- p1 + theme(element_text(size = 3))
+
+new_p1 |> 
+  ggsave(
+    filename = "pseudo-0029-multi.jpeg",
+    width = 15,
+    height = 20,
+    dpi = 700
+  )
+```

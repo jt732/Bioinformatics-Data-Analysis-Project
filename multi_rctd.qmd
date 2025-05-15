@@ -1,0 +1,182 @@
+---
+title: "multi_RCTD"
+format: pdf
+editor: visual
+---
+
+# RCTD FOR BOTH SLIDES
+
+```{r}
+library(future)
+plan(strategy = multisession, workers = 4)
+```
+
+```{r, warning = false}
+library(Seurat)
+library(future)
+library(ggplot2)
+library(dplyr)
+library(here)
+
+`%!in%` = Negate(`%in%`)
+
+# circle function just in case you need a circle to separate the samples
+circleFun <- function(center = c(0,0),diameter = 1, npoints = 100){
+    r = diameter / 2
+    tt <- seq(0,2*pi,length.out = npoints)
+    xx <- center[1] + r * cos(tt)
+    yy <- center[2] + r * sin(tt)
+    return(data.frame(x = xx, y = yy))
+}
+
+modified_circleFun <- function(x = 0, y = 0, center = c(0, 0), radius = 1) {
+  return(data.frame(
+    is_inside = ((x - center[1])**2 + (y - center[2])**2 < radius**2)
+    ))
+}
+```
+
+```{r}
+load(here("spatial/saved_data/xenium_multi_0010_processed.RData"))
+load(here("spatial/saved_data/xenium_multi_0029_processed.RData"))
+load(here("scRNAseq_RefData/vsct_ISIDBUDS_skin_reference_07222024.RData"))
+```
+
+# transfer labels from scRNAseq
+
+```{r}
+library(spacexr)
+
+# specify the query data
+query.counts = GetAssayData(xenium_multi_0029, assay = "Xenium", slot = "counts")
+coords = GetTissueCoordinates(xenium_multi_0029, which = "centroids")
+
+rownames(coords) <- coords$cell
+coords$cell <- NULL
+query = SpatialRNA(coords, query.counts, colSums(query.counts))
+
+
+
+# specify the reference -- it is the pre-labeled scRNAseq in google drive
+skin.ref = vsct_A_NM
+skin.ref$skin_big_celltype_ANM0512361224 = factor(skin.ref$skin_big_celltype_ANM0512361224, levels = c("Fibroblast_I", "Fibroblast_II", "Fibroblast_III", "Fibroblast_IV", "IFE_HF_basal", "IFE_HF_suprabasal","IFE_HF_HFOB", "IFE_HF_prof", "Macrophage_DC", "Neutrophil", "T_cell", "Endothelial_cell","Mast_cell", "Basophil", "Pericyte", "Lymph_vessel_cell","Schwann_cell", "Melanocyte"))
+
+Idents(skin.ref) = "skin_big_celltype_ANM0512361224"
+counts = GetAssayData(skin.ref, assay = "RNA", slot = "counts") %>%round()
+cluster = as.factor(skin.ref$skin_big_celltype_ANM0512361224)
+names(cluster) = colnames(skin.ref)
+nUMI = skin.ref$nCount_RNA
+names(nUMI) = colnames(skin.ref)
+nUMI = colSums(counts)
+levels(cluster) = gsub("/", "-", levels(cluster))
+reference = Reference(counts, cluster, nUMI)
+```
+
+## run RCTD
+
+```{r}
+# what do the variables mean?
+RCTD = create.RCTD(query, reference, max_cores = 16, gene_cutoff = 0, UMI_min = 30, counts_MIN = 10, CELL_MIN_INSTANCE = 5)
+RCTD = run.RCTD(RCTD, doublet_mode = "doublet")
+```
+
+## add predicted cell type labels
+
+```{r}
+annotations.df = RCTD@results$results_df
+annotations = annotations.df$first_type
+names(annotations) = rownames(annotations.df)
+xenium_multi_0029$predicted.celltype = annotations
+keep.cells = Cells(xenium_multi_0029)[!is.na(xenium_multi_0029$predicted.celltype)]
+xenium_multi_0029_subset = subset(xenium_multi_0029, cells = keep.cells)
+plot <- ImageDimPlot(xenium_multi_0029_subset, 
+                     border.color = "NA", group.by = "predicted.celltype")
+new_plot <- plot +
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.background = element_rect(color = "black", fill = "black")) +
+  ggtitle("0029 Multi Clusters")
+
+new_plot |> 
+  ggsave(
+    filename = here("spatial/images/clusters-subset-multi-0029.jpeg"),
+    width = 15,
+    height = 20,
+    dpi = 500
+  )
+```
+
+```{r}
+save(xenium_multi_0029_subset, file = here("spatial/saved_data/xenium_multi_0029_label.RData"))
+```
+
+# transfer labels from scRNAseq
+
+```{r}
+library(spacexr)
+
+# specify the query data
+query.counts = GetAssayData(xenium_multi_0010, assay = "Xenium", slot = "counts")
+coords = GetTissueCoordinates(xenium_multi_0010, which = "centroids")
+
+rownames(coords) <- coords$cell
+coords$cell <- NULL
+query = SpatialRNA(coords, query.counts, colSums(query.counts))
+
+
+
+# specify the reference -- it is the pre-labeled scRNAseq in google drive
+skin.ref = vsct_A_NM
+skin.ref$skin_big_celltype_ANM0512361224 = factor(skin.ref$skin_big_celltype_ANM0512361224, levels = c("Fibroblast_I", "Fibroblast_II", "Fibroblast_III", "Fibroblast_IV", "IFE_HF_basal", "IFE_HF_suprabasal","IFE_HF_HFOB", "IFE_HF_prof", "Macrophage_DC", "Neutrophil", "T_cell", "Endothelial_cell","Mast_cell", "Basophil", "Pericyte", "Lymph_vessel_cell","Schwann_cell", "Melanocyte"))
+
+Idents(skin.ref) = "skin_big_celltype_ANM0512361224"
+counts = GetAssayData(skin.ref, assay = "RNA", slot = "counts") %>%round()
+cluster = as.factor(skin.ref$skin_big_celltype_ANM0512361224)
+names(cluster) = colnames(skin.ref)
+nUMI = skin.ref$nCount_RNA
+names(nUMI) = colnames(skin.ref)
+nUMI = colSums(counts)
+levels(cluster) = gsub("/", "-", levels(cluster))
+reference = Reference(counts, cluster, nUMI)
+```
+
+## run RCTD
+
+```{r}
+# what do the variables mean?
+RCTD = create.RCTD(query, reference, max_cores = 16, gene_cutoff = 0, UMI_min = 30, counts_MIN = 10, CELL_MIN_INSTANCE = 5)
+RCTD = run.RCTD(RCTD, doublet_mode = "doublet")
+```
+
+## add predicted cell type labels
+
+```{r}
+annotations.df = RCTD@results$results_df
+annotations = annotations.df$first_type
+names(annotations) = rownames(annotations.df)
+xenium_multi_0010$predicted.celltype = annotations
+keep.cells = Cells(xenium_multi_0010)[!is.na(xenium_multi_0010$predicted.celltype)]
+xenium_multi_0010_subset = subset(xenium_multi_0010, cells = keep.cells)
+
+plot <- ImageDimPlot(xenium_multi_0010_subset, 
+                     border.color = "NA", group.by = "predicted.celltype")
+new_plot <- plot +
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.background = element_rect(color = "black", fill = "black")) +
+  ggtitle("0010 Multi Clusters")
+
+new_plot |> 
+  ggsave(
+    filename = here("spatial/images/clusters-subset-multi-0010.jpeg"),
+    width = 15,
+    height = 20,
+    dpi = 500
+  )
+```
+
+```{r}
+save(xenium_multi_0010_subset, file = here("spatial/saved_data/xenium_multi_0010_label.RData"))
+```

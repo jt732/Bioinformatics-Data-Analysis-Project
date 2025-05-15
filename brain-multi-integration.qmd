@@ -1,0 +1,520 @@
+---
+title: "brain-multi-integration"
+format: pdf
+editor: visual
+---
+
+# BRAIN INTEGRATION
+
+```{r}
+library(Seurat)
+library(future)
+plan("multisession", workers = 3)
+library(ggplot2)
+library(dplyr)
+library(here)
+options(future.globals.maxSize = 20000 * 1024^2)
+`%!in%` = Negate(`%in%`)
+
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+```
+
+# load the objects -- use the data with predicted cell types
+
+```{r}
+load(here("spatial/saved_data/xenium_brain_0029_label.Rdata"))
+load(here("spatial/saved_data/xenium_brain_0010_label.Rdata"))
+
+xenium_brain_list = c(xenium_brain_0029_subset, xenium_brain_0010_subset)
+```
+
+# integrate
+
+```{r}
+for (i in 1:length(xenium_brain_list)) {
+  DefaultAssay(xenium_brain_list[[i]]) = "Xenium"
+  xenium_brain_list[[i]] = NormalizeData(xenium_brain_list[[i]])
+  xenium_brain_list[[i]] = FindVariableFeatures(xenium_brain_list[[i]], selection.method = "vst", nfeatures = 300)
+  xenium_brain_list[[i]] = ScaleData(xenium_brain_list[[i]])
+}
+
+features = SelectIntegrationFeatures(object.list = xenium_brain_list)
+xenium_brain_list <- lapply(X = xenium_brain_list, FUN = function(x) {
+    x = ScaleData(x, features = features, verbose = TRUE)
+    x = RunPCA(x, features = features, verbose = TRUE)
+})
+
+anchors = FindIntegrationAnchors(object.list = xenium_brain_list, anchor.features = features, reduction = "rpca", verbose = TRUE, normalization.method = c("LogNormalize"))
+
+names(anchors@object.list) = c("xenium_brain_0029", "xenium_brain_0010")
+```
+
+```{r}
+# integration
+xenium_brain_integrated = IntegrateData(anchorset = anchors, normalization.method = "LogNormalize", verbose = FALSE)
+```
+
+# analysis
+
+```{r}
+DefaultAssay(xenium_brain_integrated) = "Xenium"
+xenium_brain_integrated = NormalizeData(xenium_brain_integrated)
+xenium_brain_integrated = FindVariableFeatures(xenium_brain_integrated, selection.method = "vst", nfeatures = 2000)
+```
+
+# join layers
+
+```{r}
+xenium_brain_integrated = JoinLayers(xenium_brain_integrated)
+```
+
+# cluster the data and then add celltypes
+
+```{r}
+xenium_brain_integrated = SCTransform(xenium_brain_integrated, assay = "Xenium")
+xenium_brain_integrated = RunPCA(xenium_brain_integrated, npcs = 30, features = rownames(xenium_brain_integrated))
+xenium_brain_integrated = RunUMAP(xenium_brain_integrated, dims = 1:30)
+xenium_brain_integrated = FindNeighbors(xenium_brain_integrated, reduction = "pca", dims = 1:30)
+xenium_brain_integrated = FindClusters(xenium_brain_integrated, resolution = c(0.2))
+# play with resolutions
+DimPlot(xenium_brain_integrated, group.by = "SCT_snn_res.0.2")
+Idents(xenium_brain_integrated) = "SCT_snn_res.0.2"
+ImageDimPlot(xenium_brain_integrated, border.color = "NA", fov = "fov")
+
+plot <- ImageDimPlot(xenium_brain_integrated, 
+                     border.color = "NA",
+                     fov = "fov")
+new_plot <- plot +
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.background = element_rect(color = "black", fill = "black")) +
+  ggtitle("Brain Clusters 1")
+
+new_plot |> 
+  ggsave(
+    filename = here("spatial/images/clusters-brain-integration-1.jpeg"),
+    width = 15,
+    height = 20,
+    dpi = 500
+  )
+
+plot <- ImageDimPlot(xenium_brain_integrated, 
+                     border.color = "NA",
+                     fov = "fov.2")
+new_plot <- plot +
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.background = element_rect(color = "black", fill = "black")) +
+  ggtitle("Brain Clusters 2")
+
+new_plot |> 
+  ggsave(
+    filename = here("spatial/images/clusters-brain-integration-2.jpeg"),
+    width = 15,
+    height = 20,
+    dpi = 500
+  )
+```
+
+```{r}
+DefaultAssay(xenium_brain_integrated) = "Xenium"
+xenium_brain_integrated = NormalizeData(xenium_brain_integrated)
+# change below to the clustering result you want to use
+Idents(xenium_brain_integrated) = "SCT_snn_res.0.2"
+marker = FindAllMarkers(xenium_brain_integrated, only.pos = TRUE, min.pct = 0.25, thresh.use = 0.25)
+# if you want to save the markers into a csv
+write.csv(marker, 
+          file = here("spatial/saved_data/xenium_brain_integrated_res01_markergene.csv"))
+DefaultAssay(xenium_brain_integrated) = "Xenium"
+
+markers_top10 = marker %>% group_by(cluster) %>% top_n(10, avg_log2FC)
+xenium_brain_integrated = ScaleData(xenium_brain_integrated, verbose = FALSE, features = markers_top10$gene)
+
+heatmap <- DoHeatmap(xenium_brain_integrated, features=markers_top10$gene)
+new_heatmap <- heatmap + theme(element_text(size = 3))
+
+new_heatmap |> 
+  ggsave(
+    filename = here("spatial/images/heatmap-brain-integrated.jpeg"),
+    width = 15,
+    height = 20,
+    dpi = 500
+  )
+```
+
+```{r}
+save(xenium_brain_integrated, 
+     file = here("spatial/saved_data/xenium_brain_integrated.RData"))
+```
+
+# Combining RCTD and Unsupervised Clustering
+
+```{r}
+load(here("spatial/saved_data/xenium_brain_integrated.RData"))
+```
+
+```{r}
+table(xenium_brain_integrated$predicted.celltype, xenium_brain_integrated$SCT_snn_res.0.2)
+```
+
+```{r}
+temp_frame <- cbind(as.numeric(as.character(xenium_brain_integrated$SCT_snn_res.0.2)),
+                    xenium_brain_integrated$predicted.celltype)
+temp_frame <- as.data.frame(temp_frame)
+colnames(temp_frame) <- c("cluster", "celltype")
+temp_frame$cluster <- as.numeric(temp_frame$cluster)
+
+temp_frame <- temp_frame |> 
+  mutate(combined_type = case_when(
+    cluster == 5 ~ "Muscle",
+    cluster == 2 & celltype == "IFE_HF_suprabasal" ~ "IFE_HF Epidermal Keratinocyte",
+    cluster != 2 & celltype == "IFE_HF_suprabasal" ~ "IFE_HF HF Keratinocyte",
+    celltype == "IFE_HF_basal" ~ "IFE_HF HF Keratinocyte II",
+    cluster == 8 ~ "Sebaceous Gland",
+    .default = celltype)) 
+
+# |> 
+  # For some reason it seems that IFE_HF epidermal keratinocyte and IFE_HF HF keratinocyte are flipped
+  
+  
+  # mutate(combined_type = case_when(
+  #   combined_type == "IFE_HF Epidermal Keratinocyte" ~ "IFE_HF HF Keratinocyte",
+  #   combined_type == "IFE_HF HF Keratinocyte" ~ "IFE_HF Epidermal Keratinocyte",
+  #   .default = combined_type
+  # ))
+cell_vec <- temp_frame[, 3]
+
+xenium_brain_integrated$combined_type <- cell_vec
+
+Idents(xenium_brain_integrated) = "combined_type"
+plot <- ImageDimPlot(xenium_brain_integrated, 
+                     border.color = "NA",
+                     fov = "fov",
+                     size = 0.1)
+new_plot <- plot +
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.background = element_rect(color = "black", fill = "black")) +
+  ggtitle("Brain Clusters Combined") +
+  scale_y_reverse()
+
+new_plot |> 
+  ggsave(
+    filename = here("spatial/images/clusters-brain-integration-combined.jpeg"),
+    width = 15,
+    height = 23,
+    dpi = 1000
+  )
+
+```
+
+```{r}
+save(xenium_brain_integrated, 
+     file = here("spatial/saved_data/xenium_brain_integrated.RData"))
+```
+
+```{r}
+xenium_brain_integrated$renamed_cluster <- xenium_brain_integrated$SCT_snn_res.0.2
+
+Idents(xenium_brain_integrated) = "renamed_cluster"
+xenium_brain_integrated <- RenameIdents(object = xenium_brain_integrated,
+  "0" = "Myeloid Cell",
+  "1" = "Fibroblast I",
+  "2" = "Epidermal Keratinocyte",
+  "3" = "HF Keratinocyte",
+  "4" = "Endothelial Cell",
+  "5" = "Muscle",
+  "6" = "Fibroblast II",
+  "7" = "HF Keratinocyte II",
+  "8" = "Sebaceous Gland",
+  "9" = "Fibroblast III",
+  "10" = "Schwann Cell",
+  "11" = "Immune Cell (Myeloid or Lymphocyte)"
+)
+xenium_brain_integrated$renamed_cluster = xenium_brain_integrated@active.ident
+
+xenium_brain_integrated$renamed_cluster = factor(x = xenium_brain_integrated$renamed_cluster, 
+                                           levels = c(
+                                             "Myeloid Cell",
+                                             "Fibroblast I",
+                                             "Epidermal Keratinocyte",
+                                             "HF Keratinocyte",
+                                             "Endothelial Cell",
+                                             "Muscle",
+                                             "Fibroblast II",
+                                             "HF Keratinocyte II",
+                                             "Sebaceous Gland",
+                                             "Fibroblast III",
+                                             "Schwann Cell",
+                                             "Immune Cell (Myeloid or Lymphocyte)"))
+
+```
+
+UMAP PLOTS
+
+```{r}
+plot <- DimPlot(xenium_brain_integrated, group.by = "renamed_cluster")
+
+new_plot <- plot +
+  ggtitle("Unsupervised Clustering UMAP") +
+  scale_y_reverse()
+
+new_plot |> 
+  ggsave(
+    filename = here("spatial/images/umap-brain-integration-unsupervised.jpeg"),
+    width = 15,
+    height = 10,
+    dpi = 500
+  )
+```
+
+```{r}
+plot <- DimPlot(xenium_brain_integrated, group.by = "predicted.celltype")
+new_plot <- plot +
+  ggtitle("Reference scRNA-seq UMAP") +
+  scale_y_reverse()
+
+new_plot |> 
+  ggsave(
+    filename = here("spatial/images/umap-brain-integration-reference.jpeg"),
+    width = 15,
+    height = 10,
+    dpi = 500
+  )
+```
+
+```{r}
+plot <- DimPlot(xenium_brain_integrated, group.by = "combined_type")
+new_plot <- plot +
+  ggtitle("Combined scRNA-seq UMAP") +
+  scale_y_reverse()
+
+new_plot |> 
+  ggsave(
+    filename = here("spatial/images/umap-brain-integration-combined.jpeg"),
+    width = 15,
+    height = 10,
+    dpi = 500
+  )
+```
+
+```{r}
+crop <- Crop(xenium_brain_integrated[["fov"]], x = c(21000, 23000), y = c(1700, 3000))
+xenium_brain_integrated[["crop"]] <- crop
+DefaultBoundary(xenium_brain_integrated[["crop"]]) <- "segmentation"
+
+p1 <- ImageDimPlot(xenium_brain_integrated, 
+                   fov = "crop", molecules = "Pvalb", border.color = "NA",
+             size = 0.5, group.by = "renamed_cluster",
+             nmols = 10000, mols.alpha = 1)
+
+p2 <- p1 + guides(fill = guide_legend(override.aes = list(size = 4), ncol = 2))
+
+
+new_plot <- p2 +
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.background = element_rect(color = "black", fill = "black")) +
+  ggtitle("Pvalb with Unsupervised Cluster for Nitrogen Mustard (1hr)") +
+  scale_y_reverse()
+
+new_plot |> 
+  ggsave(
+    filename = here("spatial/images/pvalb-unsupervised-integrated-brain.jpeg"),
+    width = 15,
+    height = 20,
+    dpi = 600
+  )
+
+
+
+p1 <- ImageDimPlot(xenium_brain_integrated, 
+                   fov = "crop", molecules = "Pou3f1", border.color = "NA",
+             size = 0.5, group.by = "renamed_cluster",
+             nmols = 10000, mols.alpha = 1)
+
+p2 <- p1 + guides(fill = guide_legend(override.aes = list(size = 4), ncol = 2))
+
+
+new_plot <- p2 +
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.background = element_rect(color = "black", fill = "black")) +
+  ggtitle("Pou3f1 with Unsupervised Cluster for Nitrogen Mustard (1hr)") +
+  scale_y_reverse()
+
+
+new_plot |> 
+  ggsave(
+    filename = here("spatial/images/Pou3f1-unsupervised-integrated-brain.jpeg"),
+    width = 15,
+    height = 20,
+    dpi = 600
+  )
+
+p1 <- ImageDimPlot(xenium_brain_integrated, 
+                   fov = "crop", molecules = c("Pvalb","Pou3f1"), border.color = "NA",
+             size = 0.5, group.by = "renamed_cluster",
+             nmols = 10000, mols.alpha = 1)
+
+p2 <- p1 + guides(fill = guide_legend(override.aes = list(size = 4), ncol = 2))
+
+
+new_plot <- p2 +
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.background = element_rect(color = "black", fill = "black")) +
+  ggtitle("Pvalb/Pou3f1 with Unsupervised Cluster for Nitrogen Mustard (1hr)") +
+  scale_y_reverse()
+
+
+new_plot |> 
+  ggsave(
+    filename = here("spatial/images/pvalb&Pou3f1-unsupervised-integrated-brain.jpeg"),
+    width = 15,
+    height = 20,
+    dpi = 600
+  )
+
+```
+
+```{r}
+p1 <- ImageDimPlot(xenium_brain_integrated, 
+                   fov = "crop", molecules = "Pvalb", border.color = "NA",
+             size = 0.5, group.by = "predicted.celltype",
+             nmols = 20000, mols.alpha = 0.5)
+
+p2 <- p1 + guides(fill = guide_legend(override.aes = list(size = 4), ncol = 2))
+
+
+new_plot <- p2 +
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.background = element_rect(color = "black", fill = "black")) +
+  ggtitle("Pvalb with Single-Cell RNA-Sequence Reference for Nitrogen Mustard (1hr)") +
+  scale_y_reverse()
+
+new_plot |> 
+  ggsave(
+    filename = here("spatial/images/Pou3f1-reference-integrated-brain.jpeg"),
+    width = 15,
+    height = 20,
+    dpi = 600
+  )
+
+##### USING COMBINED CELL TYPE
+
+p1 <- ImageDimPlot(xenium_brain_integrated, 
+                   fov = "crop", molecules = "Pvalb", border.color = "NA",
+             size = 0.5, group.by = "combined_type",
+             nmols = 20000, mols.alpha = 0.5)
+
+p2 <- p1 + guides(fill = guide_legend(override.aes = list(size = 4), ncol = 2))
+
+
+new_plot <- p2 +
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.background = element_rect(color = "black", fill = "black")) +
+  ggtitle("Pvalb with Reference and Unsupervised Clustering for Nitrogen Mustard (1hr)") +
+  scale_y_reverse()
+
+new_plot |> 
+  ggsave(
+    filename = here("spatial/images/Pou3f1-combined-integrated-brain.jpeg"),
+    width = 15,
+    height = 20,
+    dpi = 600
+  )
+```
+
+```{r}
+ImageDimPlot(object = xenium_brain_integrated ,fov = "fov", group.by = "sample")
+```
+
+```{r}
+save(xenium_brain_integrated, 
+     file = here("spatial/saved_data/xenium_brain_integrated.RData"))
+```
+
+```{r}
+load(here("spatial/saved_data/xenium_brain_integrated.RData"))
+```
+
+
+```{r}
+count <- table(xenium_brain_integrated@meta.data$sample,
+               xenium_brain_integrated@meta.data$combined_type)
+
+prop <- prop.table(count, margin = 1)
+
+cell_prop <- as.data.frame(prop)
+colnames(cell_prop) <- c("treatment", "cell_type", "percent")
+
+cell_prop |> 
+  filter(treatment%in%c("A_6hr", "E_6hr", "NM_6hr", "PAO_6hr"),
+         cell_type == "Macrophage_DC") |> 
+  ggplot(mapping = aes(x = treatment, y = percent)) +
+  geom_bar(stat = "identity")
+
+
+p1 <- cell_prop |> 
+  filter(treatment%in%c("NM_30min", "NM_1hr", "NM_2hr", "NM_3hr",
+                 "NM_6hr", "NM_24hr_1")) |> 
+  mutate(treatment = factor(treatment, levels = c("NM_30min", "NM_1hr", "NM_2hr", "NM_3hr",
+                 "NM_6hr", "NM_24hr_1"))) |> 
+  ggplot(mapping = aes(x = treatment, y = percent, group = cell_type)) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(~cell_type, scales = "free")
+
+p1
+
+p1 |> 
+  ggsave(
+    filename = here("spatial/images/celltype-facet-NM-integrated-brain.jpeg"),
+    width = 15,
+    height = 20,
+    dpi = 600
+  )
+
+
+cell_prop |> 
+  filter(treatment%in%c("NM_30min", "NM_1hr", "NM_2hr", "NM_3hr",
+                 "NM_6hr", "NM_24hr_1"),
+         cell_type %in% c("Endothelial_cell", "T_cell",
+                          "Muscle", "IFE_HF HF Keratinocyte",
+                          "Fibroblast_I", "IFE_HF Epidermal Keratinocyte",
+                          "Neutrophil")) |> 
+  mutate(treatment = factor(treatment, levels = c("NM_30min", "NM_1hr", "NM_2hr", "NM_3hr",
+                 "NM_6hr", "NM_24hr_1"))) |> 
+  ggplot(mapping = aes(x = treatment, y = percent, group = cell_type)) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(~cell_type, scales = "free")
+```
+```{r}
+```
+```{r}
+xenium_brain_integrated$celltype.treatment <- paste(xenium_brain_integrated$combined_type,
+                                                    xenium_brain_integrated$sample, sep = "_")
+```
+
+```{r}
+Idents(xenium_brain_integrated) = "celltype.treatment"
+markers <- FindMarkers(xenium_brain_integrated, ident.1 = "IFE_HF HF Keratinocyte_A_6hr", 
+                       ident.2 = "IFE_HF HF Keratinocyte_NM_6hr", verbose = FALSE)
+head(markers, n = 10)
+```
+

@@ -1,0 +1,788 @@
+---
+title: "Brain"
+format: pdf
+editor: visual
+---
+
+## Quarto
+
+This is a copy of the example_code given by the TA but a way to experiment with the code without deleting any of the examples. It is also a way to annotate the code on top of the code chunks
+
+This file assumes that the code workspace is saved inside example_code with the same folder structure as the google drive.
+
+# load packages and functions
+
+## Multi-process library for faster speed (edit out if it breaks)
+
+```{r}
+library(future)
+plan(strategy = multisession, workers = 4)
+```
+
+```{r, warning = false}
+library(Seurat)
+library(future)
+library(ggplot2)
+library(dplyr)
+library(here)
+
+`%!in%` = Negate(`%in%`)
+
+# circle function just in case you need a circle to separate the samples
+circleFun <- function(center = c(0,0),diameter = 1, npoints = 100){
+    r = diameter / 2
+    tt <- seq(0,2*pi,length.out = npoints)
+    xx <- center[1] + r * cos(tt)
+    yy <- center[2] + r * sin(tt)
+    return(data.frame(x = xx, y = yy))
+}
+
+modified_circleFun <- function(x = 0, y = 0, center = c(0, 0), radius = 1) {
+  return(data.frame(
+    is_inside = ((x - center[1])**2 + (y - center[2])**2 < radius**2)
+    ))
+}
+```
+
+# construct the xenium object
+
+```{r}
+# We will use the 0029 slide for the brain panel as an example
+# change below to the path of the data for you
+
+# path = "C:\Users\Allen\Desktop\temp-proj\spatial\raw_data\20240314__211753__03142024_AndeB_Brain\output-XETG00221__0029191__Region_1__20240314__211801"
+
+path = here::here("spatial/raw_data/20240314__211753__03142024_AndeB_Brain/output-XETG00221__0029191__Region_1__20240314__211801")
+```
+
+# Loading in data (Do this if this is the first time loading this object)
+
+```{r}
+# # Load the Xenium data,
+# xenium_brain_0029 = LoadXenium(path, fov = "fov")
+# # Remove cells with 0 counts
+# xenium_brain_0029 = subset(xenium_brain_0029, subset = nCount_Xenium > 0)
+# # if you want to save this data:
+# save(xenium_brain_0029, file = "xenium_brain_0029_raw.RData")
+```
+
+OTHERWISE USE THIS
+
+```{r}
+# Run this if the object is already saved as a .RData
+load(file = here::here("spatial/saved_data/xenium_brain_0029_raw.RData"))
+```
+
+# violin plots
+
+```{r}
+VlnPlot(xenium_brain_0029, features = c("nFeature_Xenium", "nCount_Xenium"), ncol = 2, pt.size = 0)
+
+
+```
+
+# Spatial information
+
+```{r}
+# Each assay has an image object with a fov attribute, which contains a boundary object with a
+# centroid attribute, which contains a coordinate object containing the coords of all cells
+
+xenium_brain_0029@images[["fov"]]@boundaries[["centroids"]]@coords[1:10, ]
+# first 10 cells coords
+```
+
+# take a look at the spatial location (coordinates) of the cells
+
+```{r}
+# get coordinates
+all_cell_coordinates = xenium_brain_0029@images[["fov"]]@boundaries[["centroids"]]@coords%>%as.data.frame()
+# add in cell names 
+all_cell_coordinates$cell_name = xenium_brain_0029@images[["fov"]]@boundaries[["centroids"]]@cells
+# plot the cells
+ggplot(data = all_cell_coordinates)+
+  geom_point(aes(x = x, y = y), size = 0.01)+coord_fixed()
+```
+
+```{r}
+data.frame(xenium_brain_0029@assays$Xenium$counts)
+
+# There are 247 genes and 138721 cells
+```
+
+# label the samples -- our wet lab collaborators know which sample is which
+
+```{r}
+all_cell_coordinates$sample = NA
+# separate out sample A_6hr
+all_cell_coordinates = all_cell_coordinates %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                              x>4900 &
+                              y>18000 ~ "A_6hr",
+                            .default = as.character(sample)))
+# separate out sample E_6hr
+all_cell_coordinates = all_cell_coordinates %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                              x>5350 &
+                              y>11000 & y < 18000 ~ "E_6hr",
+                            .default = as.character(sample)))
+# separate out sample NM_30min
+all_cell_coordinates = all_cell_coordinates %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                              x>4350 &
+                              y>6000 & y < 11000 ~ "NM_30min",
+                            .default = as.character(sample)))
+
+# PAO_30min
+all_cell_coordinates = all_cell_coordinates %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                              x>4500 &
+                              y>0 & y < 6000 ~ "PAO_30min",
+                            .default = as.character(sample)))
+# NM_1hr
+all_cell_coordinates = all_cell_coordinates %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                            modified_circleFun(x = x, y = y,
+                                               center = c(2500, 20000),
+                                               radius = 4000)~ "NM_1hr",
+                            .default = as.character(sample)))
+
+# PAO_1hr
+all_cell_coordinates = all_cell_coordinates %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                            modified_circleFun(x = x, y = y,
+                                               center = c(3000, 16000),
+                                               radius = 7000)~ "PAO_1hr",
+                            .default = as.character(sample)))
+
+# NM_2hr
+all_cell_coordinates = all_cell_coordinates %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                            modified_circleFun(x = x, y = y,
+                                               center = c(3000, 11000),
+                                               radius = 6000)~ "NM_2hr",
+                            .default = as.character(sample)))
+
+# PAO_2hr
+all_cell_coordinates = all_cell_coordinates %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                            modified_circleFun(x = x, y = y,
+                                               center = c(2000, 2500),
+                                               radius = 6000)~ "PAO_2hr",
+                            .default = as.character(sample)))
+
+
+# plot the labeled centroids
+ggplot(data = all_cell_coordinates)+
+  geom_point(aes(x = x, y = y, color = sample), size = 0.01) +
+    theme(
+    legend.position = "right",
+    legend.text = element_text(size = 11),
+    legend.title = element_text(size = 12)
+  )  +
+  guides(color = guide_legend(override.aes = list(size = 5)))
+```
+
+# plot the labeled samples
+
+```{r}
+##
+xenium_brain_0029$sample <- all_cell_coordinates$sample
+
+Idents(xenium_brain_0029) = "sample"
+plot <- ImageDimPlot(xenium_brain_0029, border.color = "NA")
+new_plot <- plot +
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.background = element_rect(color = "black", fill = "black")) +
+  ggtitle("0029 Brain Slide 1")
+new_plot
+```
+
+# add additional meta data
+
+```{r}
+# for example, we can add in a meta data column for treatment
+xenium_brain_0029$treatment = xenium_brain_0029$sample
+Idents(xenium_brain_0029) = "treatment"
+xenium_brain_0029 = RenameIdents(object = xenium_brain_0029,  
+                         "A_6hr" = "A","E_6hr" = "E", 
+                         "NM_30min" = "NM", "PAO_30min" = "PAO",
+                         "NM_1hr" = "NM", "PAO_1hr" = "PAO", 
+                         "NM_2hr" = "NM", "PAO_2hr" = "PAO")
+xenium_brain_0029$treatment = xenium_brain_0029@active.ident
+xenium_brain_0029$treatment = factor(x = xenium_brain_0029$treatment, levels = c("A", "E", "NM", "PAO"))
+
+# plot
+Idents(xenium_brain_0029) = "treatment"
+ImageDimPlot(xenium_brain_0029)
+
+######
+plot <- ImageDimPlot(xenium_brain_0029, border.color = "NA")
+new_plot <- plot +
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.background = element_rect(color = "black", fill = "black")) +
+  ggtitle("0029 Brain Slide 1")
+new_plot
+```
+
+# unsupervised clustering
+
+Notes from Allen: SCTransform cleans up the data, normalizing the data and accounting for confounding variables
+
+PCA reduces the dimension of the data (turns the \~400 columns into just 30)
+
+UMAP allows us to visualize the high-dimensional data we have into just 2 dimensions, allowing a visual view of the different groups
+
+FindNeighbors / FindClusters: FindClusters does the clustering on the neighbor graph built using the FindNeighbors function, using the "reduction = 'pca'" argument
+
+```{r}
+xenium_brain_0029 = SCTransform(xenium_brain_0029, assay = "Xenium") # normalizing
+xenium_brain_0029 = RunPCA(xenium_brain_0029, npcs = 30, features = rownames(xenium_brain_0029))
+# how many dims should we use? You can play with this number
+xenium_brain_0029 = RunUMAP(xenium_brain_0029, dims = 1:30)
+xenium_brain_0029 = FindNeighbors(xenium_brain_0029, reduction = "pca", dims = 1:30)
+# increase resolution to get more clusters; can go beyond 1
+xenium_brain_0029 = FindClusters(xenium_brain_0029, resolution = c(0.1, 0.2))
+
+# clustering results are stored in the meta data
+DimPlot(xenium_brain_0029, group.by = "SCT_snn_res.0.2")
+Idents(xenium_brain_0029) = "SCT_snn_res.0.2"
+ImageDimPlot(xenium_brain_0029)
+
+##
+
+plot <- ImageDimPlot(xenium_brain_0029, border.color = "NA")
+new_plot <- plot +
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.background = element_rect(color = "black", fill = "black")) +
+  ggtitle("0029 Brain Slide 1")
+new_plot |> 
+    ggsave(
+    filename = here("spatial/images/clusters-brain-0029.jpeg"),
+    width = 15,
+    height = 20,
+    dpi = 500
+  )
+```
+
+# find marker genes for each cluster
+
+```{r}
+# go back to the Xenium assay (always pay attention to the assay you are working on!)
+DefaultAssay(xenium_brain_0029) = "Xenium"
+xenium_brain_0029 = NormalizeData(xenium_brain_0029)
+# change below to the clustering result you want to use
+Idents(xenium_brain_0029) = "SCT_snn_res.0.2"
+# read about the parameters in FindAllMarkers; 
+marker = FindAllMarkers(xenium_brain_0029, only.pos = TRUE, min.pct = 0.25, thresh.use = 0.25)
+# if you want to save the markers into a csv
+write.csv(marker, file = here("spatial/saved_data/xenium_0029_brain_res01_markergene.csv")) 
+```
+
+# plots
+
+```{r}
+DefaultAssay(xenium_brain_0029) = "Xenium"
+# violin plots for example
+VlnPlot(xenium_brain_0029, features = c("Acta2", "Acsbg1"))
+# feature plots
+FeaturePlot(xenium_brain_0029, features = c("Acta2", "Acsbg1"))
+# heatmap for marker genes for example
+markers_top10 = marker %>% group_by(cluster) %>% top_n(10, avg_log2FC)
+xenium_brain_0029 = ScaleData(xenium_brain_0029, verbose = FALSE, features = markers_top10$gene)
+
+# DoHeatmap(ins_FBDP, features=markers_top10$gene)
+
+##
+heatmap <- DoHeatmap(xenium_brain_0029, features=markers_top10$gene)
+new_heatmap <- heatmap + theme(element_text(size = 3))
+
+new_heatmap |> 
+  ggsave(
+    filename = here("spatial/images/heatmap-brain-0029.jpeg"),
+    width = 15,
+    height = 20,
+    dpi = 500
+  )
+```
+
+```{r}
+save(xenium_brain_0029, file = here("spatial/saved_data/xenium_brain_0029_processed.RData"))
+```
+
+## 
+
+# For Slide 0010
+
+```{r}
+path2 = here::here("spatial/raw_data/20240314__211753__03142024_AndeB_Brain/output-XETG00221__0010341__Region_1__20240314__211801")
+```
+
+```{r}
+# # Load the Xenium data,
+# xenium_brain_0029 = LoadXenium(path, fov = "fov")
+# # Remove cells with 0 counts
+# xenium_brain_0029 = subset(xenium_brain_0029, subset = nCount_Xenium > 0)
+# # if you want to save this data:
+# save(xenium_brain_0029, file = "xenium_brain_0029_raw.RData")
+
+# Load the Xenium data,
+xenium_brain_0010 = LoadXenium(path2, fov = "fov")
+# Remove cells with 0 counts
+xenium_brain_0010 = subset(xenium_brain_0010, subset = nCount_Xenium > 0)
+# if you want to save this data:
+save(xenium_brain_0010, file = here("spatial/saved_data/xenium_brain_0010_raw.RData"))
+```
+
+```{r}
+# Run this if the object is already saved as a .RData
+load(file = here::here("spatial/saved_data/xenium_brain_0010_raw.RData"))
+```
+
+```{r}
+# get coordinates
+all_cell_coordinates2 = xenium_brain_0010@images[["fov"]]@boundaries[["centroids"]]@coords%>%as.data.frame()
+# add in cell names 
+all_cell_coordinates2$cell_name = xenium_brain_0010@images[["fov"]]@boundaries[["centroids"]]@cells
+# plot the cells
+ggplot(data = all_cell_coordinates2 )+
+  geom_point(aes(x = x, y = y), size = 0.01)+coord_fixed()
+```
+
+```{r}
+all_cell_coordinates2$sample <- NA
+
+# separate out sample NM_3hr
+all_cell_coordinates2 = all_cell_coordinates2 %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                              x>6000 &
+                              y>17700 ~ "NM_3hr",
+                            .default = as.character(sample)))
+
+# separate out sample PAO_3hr
+all_cell_coordinates2 = all_cell_coordinates2 %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                              x>4750 &
+                              y>11700 & y<17700 ~ "PAO_3hr",
+                            .default = as.character(sample)))
+
+# separate out sample NM_6hr
+all_cell_coordinates2 = all_cell_coordinates2 %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                              x>5500 &
+                              y>5000 & y<11500 ~ "NM_6hr",
+                            .default = as.character(sample)))
+
+# separate out sample PAO_6hr
+all_cell_coordinates2 = all_cell_coordinates2 %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE & (
+      (x > 5186 & y < 4500) | 
+      (x > 5050 & y > 3270 & y < 3461) | 
+      (x > 5125 & y > 3005 & y < 3105)
+    ) ~ "PAO_6hr",
+    .default = as.character(sample)))
+
+# separate out sample PAO_Cbi_24hr_2
+all_cell_coordinates2 = all_cell_coordinates2 %>% 
+  mutate(sample = case_when(
+    is.na(sample) == TRUE & (
+      (x > 3740 & x < 5160 & y < 3950) | 
+      (x > 3100 & y < 2840) | 
+      (x > 3600 & y < 3025) |
+      (x > 2650 & y < 2400) |
+      (x > 2400 & x < 2470 & y < 1740) |
+      (x > 1818 & y < 440)
+      ) ~ "PAO_Cbi_24hr_2",
+    .default = as.character(sample)
+  ))
+
+# separate out sample PAO_Cbi_24hr_1
+all_cell_coordinates2 = all_cell_coordinates2 %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE & 
+    y < 4970 ~ "PAO_Cbi_24hr_1", .default = as.character(sample)))
+
+# separate out sample NM_Cbi_24hr_1
+all_cell_coordinates2 = all_cell_coordinates2 %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE & (
+    (x < 3306 & y < 7145) |
+    (x < 1620 & y < 8322)
+    )~ "NM_Cbi_24hr_1", 
+    .default = as.character(sample)))
+
+# separate out sample NM_Cbi_24hr_2
+all_cell_coordinates2 = all_cell_coordinates2 %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+    x < 5500 & y < 10085 ~ "NM_Cbi_24hr_2", .default = as.character(sample)))
+
+# separate out NM_24hr_2
+all_cell_coordinates2 = all_cell_coordinates2 %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                            y < 25000 & y > 20000 & x > 2500
+                            & x < 5000
+                            ~ "NM_24hr_2",
+                            .default = as.character(sample)))
+
+all_cell_coordinates2 = all_cell_coordinates2 %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                            modified_circleFun(
+                             x = x, y = y,
+                             center = c(3250, 19000),
+                             radius = 700) |
+                             (x > 2600 & y < 22500 & 
+                                y > 18000 & x < 4250)
+                            ~ "NM_24hr_2",
+                           .default = as.character(sample)))
+
+all_cell_coordinates2 = all_cell_coordinates2 %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE & (
+                             (x > 3000 & y < 20000 & 
+                                y > 17250 & x < 4250) |
+                              (x > 4000 & y > 17500 & y < 20000))
+                            ~ "NM_24hr_2",
+                           .default = as.character(sample)))
+
+
+# NM_24hr_1
+all_cell_coordinates2 = all_cell_coordinates2 %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                              (y > 17000)
+                            ~ "NM_24hr_1",
+                           .default = as.character(sample)))
+
+# PAO_24hr_1
+all_cell_coordinates2 = all_cell_coordinates2 %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                              (y < 16000 - 1.43 * x) &
+                              (y < 12500) |
+                              (x < 1000 & y > 12500 & y < 15000) |
+                              (x < 1200 & y > 12500 & y < 14700) |
+                              (x < 1350 & y > 12500 & y < 14500) |
+                              (x > 1350 & x < 1425 & y > 12500 & y < 14500) |
+                              (x < 1500 & y > 12500 & y < 13850) |
+                              (x < 1600 & y > 12500 & y < 13750) |
+                              (x < 1750 & y > 12500 & y < 13625) |
+                              (x < 1850 & y > 12500 & y < 13360) |
+                              (x < 1900 & y > 12500 & y < 13200) |
+                              (x < 2000 & y > 12500 & y < 13100) |
+                              (x < 2050 & y > 12500 & y < 12900) |
+                              (x < 2200 & y > 12500 & y < 12800)
+                            ~ "PAO_24hr_1",
+                           .default = as.character(sample)))
+
+# PAO_24hr_2
+all_cell_coordinates2 = all_cell_coordinates2 %>% 
+  mutate(sample = case_when(is.na(sample) == TRUE &
+                              (y > 16000 - 1.43 * x) &
+                              (x > 2500) |
+                              (x > 450 & x < 2500 & y > 15000 & y < 17000) |
+                              (x > 1050 & x < 1500 & y > 14700 & y < 15000) |
+                              (x > 1500 & x < 2500 & y > 14000 & y < 15000) |
+                              (x > 1200 & x < 1500 & y > 14250 & y < 15000) |
+                              (x > 1300 & x < 1500 & y > 14100 & y < 14500) |
+                              (x > 1495 & x < 2500 & y > 13800 & y < 14000) |
+                              (x > 1750 & x < 2500 & y > 13500 & y < 14000) |
+                              (x > 1905 & x < 2500 & y > 13250 & y < 14000) |
+                              (x > 2000 & x < 2500 & y > 13050 & y < 14000) |
+                              (x > 2180 & x < 2500 & y > 12750 & y < 13250) |
+                              (x > 1600 & x < 1750 & y > 13570 & y < 14000) |
+                              (x > 1375 & x < 1500 & y > 14000 & y < 14250) |
+                              (x > 1425 & x < 1500 & y > 13800 & y < 14000) |
+                              (x > 1762.5 & x < 1950 & y > 13375 & y < 13500) |
+                              (x > 1825 & x < 1900 & y > 13250 & y < 13500) |
+                              (x > 2095 & x < 2500 & y > 12550 & y < 13000) |
+                              (x > 1912.5 & x < 2075 & y > 13000 & y < 13175) |
+                              (x > 1910 & x < 1925 & y > 13000 & y < 13175) |
+                              (x > 2000 & x < 2028 & y > 12875 & y < 13000) |
+                              (x < 400 & y > 15000 & y < 15600)
+                            ~ "PAO_24hr_2",
+                           .default = as.character(sample)))
+
+# plotting
+ggplot(data = all_cell_coordinates2)+
+  geom_point(aes(x = x, y = y, color = sample), size = 0.01) +
+    theme(
+    legend.position = "right",
+    legend.text = element_text(size = 11),
+    legend.title = element_text(size = 12)
+  )  +
+  guides(color = guide_legend(override.aes = list(size = 5)))
+```
+
+```{r}
+# plotting
+all_cell_coordinates2 |> 
+  filter(sample == NA) |> 
+ggplot()+
+  geom_point(aes(x = x, y = y, color = sample), size = 0.01) +
+    theme(
+    legend.position = "right",
+    legend.text = element_text(size = 11),
+    legend.title = element_text(size = 12)
+  ) # +
+  #guides(color = guide_legend(override.aes = list(size = 5))) + 
+  #geom_abline(intercept = 16100, slope = -1.59)
+  # y = 16000 - 1.43x
+```
+
+```{r}
+xenium_brain_0010$sample <- all_cell_coordinates2$sample
+Idents(xenium_brain_0010) = "sample"
+plot <- ImageDimPlot(xenium_brain_0010, border.color = "NA")
+plot
+```
+
+```{r}
+options(future.globals.maxSize= 1000000000)
+xenium_brain_0010 = SCTransform(xenium_brain_0010, assay = "Xenium")
+xenium_brain_0010 = RunPCA(xenium_brain_0010, npcs = 30, features = rownames(xenium_brain_0010))
+# how many dims should we use? You can play with this number
+xenium_brain_0010 = RunUMAP(xenium_brain_0010, dims = 1:30)
+xenium_brain_0010 = FindNeighbors(xenium_brain_0010, reduction = "pca", dims = 1:30)
+
+
+# increase resolution to get more clusters; can go beyond 1
+xenium_brain_0010 = FindClusters(xenium_brain_0010, resolution = c(0.1))
+
+# clustering results are stored in the meta data
+DimPlot(xenium_brain_0010, group.by = "SCT_snn_res.0.1")
+Idents(xenium_brain_0010) = "SCT_snn_res.0.1"
+ImageDimPlot(xenium_brain_0010)
+
+##
+
+plot <- ImageDimPlot(xenium_brain_0010, border.color = "NA")
+new_plot <- plot +
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.background = element_rect(color = "black", fill = "black")) +
+  ggtitle("0010 Brain Clusters")
+
+new_plot |> 
+  ggsave(
+    filename = here("spatial/images/clusters-brain-0010.jpeg"),
+    width = 15,
+    height = 20,
+    dpi = 500
+  )
+```
+
+```{r}
+DefaultAssay(xenium_brain_0010) = "Xenium"
+xenium_brain_0010 = NormalizeData(xenium_brain_0010)
+# change below to the clustering result you want to use
+Idents(xenium_brain_0010) = "SCT_snn_res.0.1"
+# read about the parameters in FindAllMarkers; 
+marker = FindAllMarkers(xenium_brain_0010, only.pos = TRUE, min.pct = 0.25, thresh.use = 0.25)
+# if you want to save the markers into a csv
+write.csv(marker, file = here("spatial/saved_data/xenium_0010_brain_res01_markergene.csv"))
+```
+
+```{r}
+DefaultAssay(xenium_brain_0010) = "Xenium"
+markers_top10 = marker %>% 
+  group_by(cluster) %>% 
+  top_n(10, avg_log2FC)
+xenium_brain_0010 = ScaleData(xenium_brain_0010, verbose = FALSE, features = markers_top10$gene)
+
+heatmap <- DoHeatmap(xenium_brain_0010, features=markers_top10$gene)
+
+new_heatmap <- heatmap + theme(element_text(size = 3))
+
+new_heatmap |> 
+  ggsave(
+    filename = here("spatial/images/heatmap-brain-0010.jpeg"),
+    width = 15,
+    height = 20,
+    dpi = 500
+  )
+```
+
+```{r}
+save(xenium_brain_0010, file = here("spatial/saved_data/xenium_brain_0010_processed.RData"))
+```
+
+# RCTD FOR BOTH SLIDES
+
+```{r}
+load(here("spatial/saved_data/xenium_brain_0010_processed.RData"))
+load(here("spatial/saved_data/xenium_brain_0029_processed.RData"))
+load(here("scRNAseq_RefData/vsct_ISIDBUDS_skin_reference_07222024.RData"))
+```
+
+# transfer labels from scRNAseq
+
+```{r}
+library(spacexr)
+
+# specify the query data
+query.counts = GetAssayData(xenium_brain_0029, assay = "Xenium", slot = "counts")
+coords = GetTissueCoordinates(xenium_brain_0029, which = "centroids")
+
+rownames(coords) <- coords$cell
+coords$cell <- NULL
+query = SpatialRNA(coords, query.counts, colSums(query.counts))
+
+
+
+# specify the reference -- it is the pre-labeled scRNAseq in google drive
+skin.ref = vsct_A_NM
+skin.ref$skin_big_celltype_ANM0512361224 = factor(skin.ref$skin_big_celltype_ANM0512361224, levels = c("Fibroblast_I", "Fibroblast_II", "Fibroblast_III", "Fibroblast_IV", "IFE_HF_basal", "IFE_HF_suprabasal","IFE_HF_HFOB", "IFE_HF_prof", "Macrophage_DC", "Neutrophil", "T_cell", "Endothelial_cell","Mast_cell", "Basophil", "Pericyte", "Lymph_vessel_cell","Schwann_cell", "Melanocyte"))
+
+Idents(skin.ref) = "skin_big_celltype_ANM0512361224"
+counts = GetAssayData(skin.ref, assay = "RNA", slot = "counts") %>%round()
+cluster = as.factor(skin.ref$skin_big_celltype_ANM0512361224)
+names(cluster) = colnames(skin.ref)
+nUMI = skin.ref$nCount_RNA
+names(nUMI) = colnames(skin.ref)
+nUMI = colSums(counts)
+levels(cluster) = gsub("/", "-", levels(cluster))
+reference = Reference(counts, cluster, nUMI)
+```
+
+## run RCTD
+
+```{r}
+# what do the variables mean?
+RCTD = create.RCTD(query, reference, max_cores = 8, gene_cutoff = 0, UMI_min = 30, counts_MIN = 10, CELL_MIN_INSTANCE = 5)
+RCTD = run.RCTD(RCTD, doublet_mode = "doublet")
+```
+
+## add predicted cell type labels
+
+```{r}
+annotations.df = RCTD@results$results_df
+annotations = annotations.df$first_type
+names(annotations) = rownames(annotations.df)
+xenium_brain_0029$predicted.celltype = annotations
+keep.cells = Cells(xenium_brain_0029)[!is.na(xenium_brain_0029$predicted.celltype)]
+xenium_brain_0029_subset = subset(xenium_brain_0029, cells = keep.cells)
+plot <- ImageDimPlot(xenium_brain_0029_subset, 
+                     border.color = "NA", group.by = "predicted.celltype",
+                     size = 0.2)
+new_plot <- plot +
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.background = element_rect(color = "black", fill = "black")) +
+  ggtitle("0029 Brain Clusters")
+
+new_plot |> 
+  ggsave(
+    filename = here("spatial/images/clusters-subset-brain-0029.jpeg"),
+    width = 15,
+    height = 20,
+    dpi = 500
+  )
+```
+
+```{r}
+save(xenium_brain_0029_subset, file = here("spatial/saved_data/xenium_brain_0029_label.RData"))
+```
+
+# transfer labels from scRNAseq
+
+```{r}
+library(spacexr)
+
+# specify the query data
+query.counts = GetAssayData(xenium_brain_0010, assay = "Xenium", slot = "counts")
+coords = GetTissueCoordinates(xenium_brain_0010, which = "centroids")
+
+rownames(coords) <- coords$cell
+coords$cell <- NULL
+query = SpatialRNA(coords, query.counts, colSums(query.counts))
+
+
+
+# specify the reference -- it is the pre-labeled scRNAseq in google drive
+skin.ref = vsct_A_NM
+skin.ref$skin_big_celltype_ANM0512361224 = factor(skin.ref$skin_big_celltype_ANM0512361224, levels = c("Fibroblast_I", "Fibroblast_II", "Fibroblast_III", "Fibroblast_IV", "IFE_HF_basal", "IFE_HF_suprabasal","IFE_HF_HFOB", "IFE_HF_prof", "Macrophage_DC", "Neutrophil", "T_cell", "Endothelial_cell","Mast_cell", "Basophil", "Pericyte", "Lymph_vessel_cell","Schwann_cell", "Melanocyte"))
+
+Idents(skin.ref) = "skin_big_celltype_ANM0512361224"
+counts = GetAssayData(skin.ref, assay = "RNA", slot = "counts") %>%round()
+cluster = as.factor(skin.ref$skin_big_celltype_ANM0512361224)
+names(cluster) = colnames(skin.ref)
+nUMI = skin.ref$nCount_RNA
+names(nUMI) = colnames(skin.ref)
+nUMI = colSums(counts)
+levels(cluster) = gsub("/", "-", levels(cluster))
+reference = Reference(counts, cluster, nUMI)
+```
+
+## run RCTD
+
+```{r}
+# what do the variables mean?
+RCTD = create.RCTD(query, reference, max_cores = 16, gene_cutoff = 0, UMI_min = 30, counts_MIN = 10, CELL_MIN_INSTANCE = 5)
+RCTD = run.RCTD(RCTD, doublet_mode = "doublet")
+```
+
+## add predicted cell type labels
+
+```{r}
+annotations.df = RCTD@results$results_df
+annotations = annotations.df$first_type
+names(annotations) = rownames(annotations.df)
+xenium_brain_0010$predicted.celltype = annotations
+keep.cells = Cells(xenium_brain_0010)[!is.na(xenium_brain_0010$predicted.celltype)]
+xenium_brain_0010_subset = subset(xenium_brain_0010, cells = keep.cells)
+
+plot <- ImageDimPlot(xenium_brain_0010_subset, 
+                     border.color = "NA", group.by = "predicted.celltype")
+new_plot <- plot +
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.background = element_rect(color = "black", fill = "black")) +
+  ggtitle("0010 Brain Clusters")
+
+new_plot |> 
+  ggsave(
+    filename = here("spatial/images/clusters-subset-brain-0010.jpeg"),
+    width = 15,
+    height = 20,
+    dpi = 500
+  )
+```
+
+```{r}
+save(xenium_brain_0010_subset, file = here("spatial/saved_data/xenium_brain_0010_label.RData"))
+```
+
+```{r}
+load(here::here("spatial/saved_data/xenium_brain_integrated.RData"))
+plot <- ImageDimPlot(xenium_brain_integrated, group.by = "SCT_snn_res.0.1", fov = "fov.2")
+new_plot <- plot +
+  theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  plot.background = element_rect(color = "black", fill = "black")) +
+  ggtitle("Plot by cluster")
+
+
+```
+
+```{r}
+load(here("scRNAseq_RefData/vsct_ISIDBUDS_skin_reference_07222024.RData"))
+```
+
+```{r}
+# average number of unique genes per cell for reference
+mean(vsct_A_NM@meta.data$nFeature_RNA)
+# About 2560
+
+
+# average number of unique genes per cell for spatial
+mean(xenium_brain_integrated@meta.data$nFeature_Xenium)
+# about 27??
+
+```
+
+```{r}
+```
